@@ -11,3 +11,6 @@
  2. street-xxx;
  3. state- xxx;
  
+ ### Education
+ 1. College : xxxx
+ 2. branch : xxxx
