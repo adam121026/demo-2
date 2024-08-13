@@ -11,16 +11,51 @@
 #include <cstdlib>
 using namespace std;
 
+
+//PATHS//
+string DIR_PATH = "./Assignment1/";
+//Error Msgs//
+string NO_INDEX = "provide the start and end indices";
+string FORMAT = "provide the argument in proper fromat of ./a.out <input_file> <flag 0 or 1> <start_index> <end_index>";
+string WRONG_INDEX_1 = "start index should be more than than end index";
+string WRONG_INDEX_2 = "indices cannot be negative";
+string WRITE = "unable to write the file";
+string READ = "unable to read the file";
+string DIR = "unable to create the directory";
+string INPUT_PATH = "Input file doesnt exist in the give Path: ";
+
+void displayError(string msg) {
+    errno = 1;
+    perror(msg.c_str());
+    errno = 0;
+     _exit(EXIT_FAILURE);
+}
+
+
+string getFileName(string path) {
+    ssize_t lastSlash = path.find_last_of('/');
+    if (lastSlash == -1) return path;
+    else return path.substr(lastSlash + 1, path.size());
+
+}
+
 void  create_directory() {
-    mkdir("Assignment1", 0755);
+    int err = mkdir(DIR_PATH.c_str(), 0755);
+    if (err == -1 && errno != EEXIST) {
+        displayError(DIR);
+    }
 }
 
 int create_file(const char* path) {
     return open(path,  O_RDWR | O_CREAT | O_TRUNC, 0666);
 }
 
-int open_file(const char* path) {
-    return open(path, O_RDONLY);
+int open_file(string path) {
+    int fileNo =  open(path.c_str(), O_RDONLY);
+    if (fileNo == -1) {
+        displayError(INPUT_PATH + path);
+    }
+    return fileNo;
 }
 
 off_t getfilesize(int fd) {
@@ -40,6 +75,12 @@ ssize_t convert_to_integer(char* s) {
     return integer;
 }
 
+void displayProgress(ssize_t data_written, ssize_t fileSize, string& percentage ) {
+    int  progress = (data_written * 100) / fileSize;
+    percentage   = to_string(progress) + "%";
+}
+
+
 void reverse_chunks(char* buffer, ssize_t chunk_size) {
     int i = 0;
     int j = chunk_size-1;
@@ -53,38 +94,56 @@ void reverse_chunks(char* buffer, ssize_t chunk_size) {
     }
 }
 
-
-string setPrecision(string progress) {
-    string precise;
-    int cnt = 0;
-    bool flag = false;
-    for (auto it : progress) {
-        if(it == '.') {
-            cnt++;
-            flag = !flag;
-        }
-        if (cnt == 3 && flag) break;
-
-        if (!flag) precise.push_back(it);
-    }
-    return precise;
-}
-
-void displayProgress(ssize_t data_written, ssize_t fileSize, string& percentage ) {
-   double  progress = (static_cast<double>(data_written)) / fileSize * 100;
-    percentage =  setPrecision(to_string(progress)) + "%";
-}
-
 ssize_t write_to_file_with_given_size(int fd, int writefile_fd ,ssize_t offSet, char* buffer, ssize_t bytes_to_read, int rev) {
         lseek(fd, offSet, SEEK_SET);
          ssize_t curr_read = read(fd, buffer, bytes_to_read);
+         if (curr_read == -1) {
+            displayError(READ);
+         }
          if (rev) reverse_chunks(buffer, curr_read);
-         return write(writefile_fd, buffer, curr_read);
+         int write_fd =  write(writefile_fd, buffer, curr_read);
+         if (write_fd == -1) {
+            displayError(WRITE);
+         }
+         return write_fd;
 
 }
 
+
+ssize_t traversing_the_file(int fd, int writefile_fd, ssize_t fileSize, ssize_t end, ssize_t bufferSize, int rev, char* buffer, int total_bytes_written) {
+        ssize_t offSet = fileSize;
+        ssize_t bytes_to_read = bufferSize;
+        string percentage;
+        int rem_chunk = (fileSize - end) % bufferSize;
+        int err;
+
+        for (ssize_t offSet = fileSize-bufferSize; offSet>=end; offSet-=bytes_to_read) {
+            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, offSet, buffer, bytes_to_read, rev);
+                total_bytes_written += data_written;
+                displayProgress(total_bytes_written, fileSize, percentage);
+                err = write(1, "\r\x1b[2K", 5);
+                if (err == -1) {
+                    displayError(WRITE);
+                }
+                err = write(1, percentage.c_str(), percentage.size());
+                if (err == -1) {
+                    displayError(WRITE);
+                }
+        }
+
+        // if rem_chunk exists read the last chunk and write the file//
+        if (rem_chunk) {
+            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, end, buffer, rem_chunk, 1);
+            total_bytes_written += data_written;
+            displayProgress(total_bytes_written, fileSize, percentage);
+            write(1, "\r\x1b[2K", 5);
+            write(1, percentage.c_str(), percentage.size());
+        }
+    return total_bytes_written;
+}
+
 int main( int argc, char *argv[]) {
-    char* input_file;
+    string input_file;
     ssize_t curr_chunk;
     ssize_t start = 0;
     ssize_t end = 0;
@@ -96,86 +155,60 @@ int main( int argc, char *argv[]) {
     off_t fileSize;
 
     if (argv[2] == "1" && argc < 5) {
-        perror("provide the start and end indices");
+        displayError(NO_INDEX);
     } else if (argc < 3) {
-        perror("Flag 0 : provide input in the following format ./aout <input file> <flag>");   
+        displayError(FORMAT);
     }
-    input_file = argv[1];
+
+    string input_file_path = argv[1];
+    input_file = getFileName(input_file_path);
+
 
     int flag = convert_to_integer(argv[2]);
-    if (flag && argc == 5) {
+
+    if (flag) {
+        if (argc < 5) displayError(FORMAT);
         start = convert_to_integer(argv[3]);
         end = convert_to_integer(argv[4]);
     }
 
+    if (start < 0 || end< 0) {
+        displayError(WRONG_INDEX_2);
+    }
+
+    if (start > end) {
+        displayError(WRONG_INDEX_1);
+    }
 
     //input file//
-    int fd = open_file(input_file);
+    int fd = open_file(input_file_path);
     fileSize = getfilesize(fd);
 
     //file dir//
     create_directory();
 
     //output_file//
-    int writefile_fd = create_file("Assignment1/output.txt");
+    string output_file = DIR_PATH + to_string(flag) + "_" + input_file;
+    int writefile_fd = create_file(output_file.c_str());
     size_t total = 0;
+    ssize_t total_bytes_written = 0;
 
     if (!flag) {
-         //traversing file and revrsing the chunks//
-        ssize_t offSet = fileSize;
-        ssize_t bytes_to_read = bufferSize;
-        string percentage;
-        ssize_t total_bytes_written = 0;
-
-        
-        int rem_chunk = fileSize % bufferSize;
-        for (ssize_t offSet = fileSize-bufferSize; offSet>=0; offSet-=bytes_to_read) {
-            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, offSet, buffer, bytes_to_read, 1);
-                total_bytes_written += data_written;
-                displayProgress(total_bytes_written, fileSize, percentage);
-                write(1, "\r\x1b[2K", 5);
-                write(1, percentage.c_str(), percentage.size());
-        }
-
-        // if rem_chunk exists read the last chunk and write the file//
-        if (rem_chunk) {
-            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, 0, buffer, rem_chunk, 1);
-            total_bytes_written += data_written;
-            displayProgress(total_bytes_written, fileSize, percentage);
-            write(1, "\r\x1b[2K", 5);
-            write(1, percentage.c_str(), percentage.size());
+        //traversing file and revrsing the chunks//
+    total_bytes_written =   traversing_the_file(fd, writefile_fd, fileSize, 0, bufferSize, 1, buffer, 0);
 
         }
-    } else {
+    else {
         //left half reversal//
-        ssize_t offSet;
-        ssize_t bytes_to_read = bufferSize;
-        string percentage;
-        ssize_t  total_bytes_written = 0;
-        int rem_chunk = start % bufferSize;
-        for (offSet = start-bufferSize; offSet>=0; offSet-=bytes_to_read) {
-            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, offSet, buffer, bytes_to_read, 1);
-                total_bytes_written += data_written;
-                displayProgress(total_bytes_written, fileSize, percentage);
-                write(1, "\r\x1b[2K", 5);
-                write(1, percentage.c_str(), percentage.size());
-        }
-
-        // if rem_chunk exists read the last chunk and write the file//
-        if (rem_chunk) {
-            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, 0, buffer, rem_chunk, 1);
-            total_bytes_written += data_written;
-            displayProgress(total_bytes_written, fileSize, percentage);
-            write(1, "\r\x1b[2K", 5);
-            write(1, percentage.c_str(), percentage.size());
-
-        }
+        total_bytes_written =  traversing_the_file(fd, writefile_fd, start, 0, bufferSize, 1, buffer, total_bytes_written);
 
 //--------------------------------------------------------------------------------------------------------------------------------//
         //middle chunk reversal//
             ssize_t midChunk = abs(end - start)+1;
-            rem_chunk = midChunk % bufferSize;
-            bytes_to_read = bufferSize;                                                                                                                                                                      
+            ssize_t rem_chunk = midChunk % bufferSize;
+            ssize_t bytes_to_read = bufferSize;
+            string percentage;  
+            ssize_t offSet;                                                                                                                                                                    
             for (offSet = start; offSet<=end-bytes_to_read + 1; offSet+=bytes_to_read) {
                 ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, offSet, buffer, bytes_to_read, 0);
                 total_bytes_written += data_written;
@@ -191,35 +224,13 @@ int main( int argc, char *argv[]) {
             write(1, percentage.c_str(), percentage.size());
 
         }
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //right half  reversal//
+    traversing_the_file(fd, writefile_fd, fileSize, end+1, bufferSize, 1, buffer, total_bytes_written);                                                                                                                                                       
+    } 
 
-// //===============================================================================================================================//
-
-        //right half  reversal//
-        ssize_t rightChunk = (fileSize - end - 1);
-        rem_chunk = rightChunk % bufferSize;
-        bytes_to_read = bufferSize;     
-
-        for (offSet = fileSize-bufferSize; offSet>end; offSet-=bytes_to_read) {
-                
-                ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, offSet, buffer, bytes_to_read, 1);
-                total_bytes_written += data_written;
-                displayProgress(total_bytes_written, fileSize, percentage);
-                write(1, "\r\x1b[2K", 5);
-                write(1, percentage.c_str(), percentage.size());
-        }
-        // if rem_chunk exists read the last chunk and write the file//
-        if (rem_chunk) {
-            ssize_t data_written = write_to_file_with_given_size(fd, writefile_fd, end+1, buffer, rem_chunk, 1);
-            total_bytes_written += data_written;
-            displayProgress(total_bytes_written, fileSize, percentage);
-            write(1, "\r\x1b[2K", 5);
-            write(1, percentage.c_str(), percentage.size());
-
-        }                                                                                                                                                                
-
-      } 
-   
     close(fd);
     close(writefile_fd);
+    
 }
 
